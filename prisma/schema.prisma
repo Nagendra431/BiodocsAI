@@ -1,0 +1,307 @@
+generator client {
+    provider = "prisma-client-js"
+}
+
+datasource db {
+    provider  = "postgresql"
+    // NOTE: When using mysql or sqlserver, uncomment the @db.Text annotations in model Account below
+    // Further reading:
+    // https://next-auth.js.org/adapters/prisma#create-the-prisma-schema
+    // https://www.prisma.io/docs/reference/api-reference/prisma-schema-reference#string
+    url       = env("DATABASE_URL")
+    directUrl = env("DIRECT_URL")
+}
+
+// Necessary for Next auth
+model Account {
+    id                       String  @id @default(cuid())
+    userId                   String
+    type                     String
+    provider                 String
+    providerAccountId        String
+    refresh_token            String? // @db.Text
+    access_token             String? // @db.Text
+    expires_at               Int?
+    token_type               String?
+    scope                    String?
+    id_token                 String? // @db.Text
+    session_state            String?
+    user                     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+    refresh_token_expires_in Int?
+
+    @@unique([provider, providerAccountId])
+}
+
+enum UserRole {
+    ADMIN
+    USER
+}
+
+model User {
+    id            String    @id @default(cuid())
+    name          String?
+    email         String?   @unique
+    password      String?
+    emailVerified DateTime?
+    image         String?
+    createdAt     DateTime  @default(now())
+    updatedAt     DateTime  @default(now()) @updatedAt
+    headline      String?   @db.VarChar(100)
+    bio           String?   @db.Text
+    interests     String[]
+    location      String?
+    website       String?
+    accounts      Account[]
+
+    role      UserRole @default(USER)
+    hasAccess Boolean  @default(false)
+
+    // Credits and Subscription
+    credits           Int      @default(100) // Free credits for new users
+    subscriptionPlan  String   @default("free") // free, basic, pro, enterprise
+    subscriptionEnd   DateTime?
+    stripeCustomerId  String?  @unique
+    
+    // Document system
+    documents BaseDocument[]
+    favorites FavoriteDocument[]
+    savedDocuments Document[]
+
+    CustomTheme CustomTheme[]
+
+    GeneratedImage GeneratedImage[]
+    
+    DeepResearchReport DeepResearchReport[]
+    
+    // Chat system
+    chatConversations ChatConversation[]
+    chatMessages      ChatMessage[]
+    
+    // Credit transactions
+    creditTransactions CreditTransaction[]
+    payments          Payment[]
+    
+    // Token tracking
+    tokenUsage        TokenUsage[]
+    totalInputTokens  Int   @default(0)
+    totalOutputTokens Int   @default(0)
+    totalTokens       Int   @default(0)
+    totalTokenCost    Float @default(0) // Total cost in USD
+}
+
+enum DocumentType {
+    NOTE
+    DOCUMENT
+    DRAWING
+    DESIGN
+    STICKY_NOTES
+    MIND_MAP
+    RAG
+    RESEARCH_PAPER
+    FLIPBOOK
+    PRESENTATION
+}
+
+model BaseDocument {
+    id           String        @id @default(cuid())
+    title        String
+    type         DocumentType
+    userId       String
+    user         User          @relation(fields: [userId], references: [id])
+    thumbnailUrl String?
+    createdAt    DateTime      @default(now())
+    updatedAt    DateTime      @updatedAt
+    isPublic     Boolean       @default(false)
+    documentType String
+    // Relations to specific document types
+    presentation Presentation?
+
+    // Favorites
+    favorites FavoriteDocument[]
+}
+
+model Presentation {
+    id                String       @id @default(cuid())
+    content           Json // Presentation content including slides, theme, etc.
+    theme             String       @default("default")
+    imageSource       String       @default("ai") // The image model used for generating images
+    prompt            String? // The prompt used for generating the presentation
+    presentationStyle String? // The style of the presentation
+    language          String?      @default("en-US") // The language of the presentation
+    outline           String[] // Store the presentation outline
+    searchResults     Json? // Store the search results
+    base              BaseDocument @relation(fields: [id], references: [id], onDelete: Cascade)
+    templateId        String?
+    customThemeId     String? // Reference to custom theme if used
+    customTheme       CustomTheme? @relation(fields: [customThemeId], references: [id])
+}
+
+model CustomTheme {
+    id            String         @id @default(cuid())
+    name          String
+    description   String?
+    userId        String
+    user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+    logoUrl       String?
+    isPublic      Boolean        @default(false)
+    createdAt     DateTime       @default(now())
+    updatedAt     DateTime       @updatedAt
+    themeData     Json // Store the complete theme configuration
+    presentations Presentation[]
+
+    @@index([userId])
+}
+
+model FavoriteDocument {
+    id         String       @id @default(uuid())
+    documentId String
+    document   BaseDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+    userId     String
+    user       User         @relation(fields: [userId], references: [id])
+}
+
+model GeneratedImage {
+    id        String   @id @default(cuid())
+    url       String
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+    userId    String
+    user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    prompt    String
+}
+
+model Document {
+    id        String   @id @default(cuid())
+    title     String
+    content   String   @db.Text
+    type      String   // research-paper, deep-research, presentation, document
+    sources   String?  @db.Text // JSON string of sources
+    userId    String
+    user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([userId])
+    @@index([type])
+}
+
+model DeepResearchReport {
+    id             String   @id @default(cuid())
+    userId         String
+    topic          String
+    status         String   // pending, processing, completed, failed
+    filePath       String   // Path to .md file in Supabase Storage
+    markdown       String   @db.Text
+    pmidsUsed      Json?    // Array of PMIDs
+    wordCount      Int?
+    referenceCount Int?
+    createdAt      DateTime @default(now())
+    updatedAt      DateTime @updatedAt
+    user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@index([userId])
+    @@index([status])
+}
+
+// Chat Conversation - Groups related messages together
+model ChatConversation {
+    id        String        @id @default(cuid())
+    userId    String
+    user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+    title     String?       // Optional conversation title
+    context   String        // home, editor, medical-assistant, research-paper, deep-research
+    metadata  Json?         // Additional context (documentId, etc.)
+    createdAt DateTime      @default(now())
+    updatedAt DateTime      @updatedAt
+    messages  ChatMessage[]
+
+    @@index([userId])
+    @@index([context])
+}
+
+// Individual Chat Messages
+model ChatMessage {
+    id             String           @id @default(cuid())
+    conversationId String
+    conversation   ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+    userId         String
+    user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+    role           String           // user, assistant, system
+    content        String           @db.Text
+    metadata       Json?            // Model used, tokens, etc.
+    createdAt      DateTime         @default(now())
+
+    @@index([conversationId])
+    @@index([userId])
+}
+
+// Credit Transaction - Track all credit usage and purchases
+model CreditTransaction {
+    id          String   @id @default(cuid())
+    userId      String
+    user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    amount      Int      // Positive for credit purchase, negative for usage
+    type        String   // usage, purchase, bonus, refund
+    description String   // What the credits were used for
+    operation   String?  // presentation, research, chat, etc.
+    createdAt   DateTime @default(now())
+
+    @@index([userId])
+    @@index([type])
+    @@index([createdAt])
+}
+
+// Payment - Track all payments
+model Payment {
+    id                String   @id @default(cuid())
+    userId            String
+    user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    amount            Float    // Amount in smallest currency unit (cents/paise)
+    currency          String   // USD or INR
+    status            String   // pending, completed, failed, refunded
+    plan              String   // Plan purchased
+    creditsAdded      Int      // Credits added to account
+    stripePaymentId   String?  @unique
+    razorpayPaymentId String?  @unique
+    createdAt         DateTime @default(now())
+    updatedAt         DateTime @updatedAt
+
+    @@index([userId])
+    @@index([status])
+    @@index([createdAt])
+}
+
+// Token Usage - Track actual token consumption per API call
+model TokenUsage {
+    id              String   @id @default(cuid())
+    userId          String
+    user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    
+    // Operation details
+    operation       String   // presentation_generate, research_paper, chat, etc.
+    operationId     String?  // ID of the presentation/document/chat created
+    
+    // Token metrics
+    inputTokens     Int      // Tokens sent to API (prompt)
+    outputTokens    Int      // Tokens received from API (completion)
+    totalTokens     Int      // inputTokens + outputTokens
+    
+    // Model details
+    modelProvider   String   // openai, cerebras, together, ollama, etc.
+    modelId         String   // gpt-4, llama3.1-70b, etc.
+    
+    // Cost calculation (in USD)
+    inputCost       Float    // Cost for input tokens
+    outputCost      Float    // Cost for output tokens
+    totalCost       Float    // Total cost
+    
+    // Metadata
+    metadata        Json?    // Additional context (prompt length, response length, etc.)
+    createdAt       DateTime @default(now())
+    
+    @@index([userId])
+    @@index([operation])
+    @@index([modelProvider])
+    @@index([createdAt])
+    @@index([userId, createdAt])
+}
